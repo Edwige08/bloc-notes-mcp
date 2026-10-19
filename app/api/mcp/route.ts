@@ -1,10 +1,18 @@
 import { createMcpHandler } from "mcp-handler";
+import { z } from "zod";
 import { RULES } from "@/lib/rules";
+import { getNotes, appendToNotes, setNotes, addHistory } from "@/lib/store";
 
-let notes = "- [2026-10-19] [INFO] Bloc-notes créé.";
+// Provisoire : l'identification de l'agent arrive à l'étape 5
+const AGENT = "inconnu";
+
+function summary(text: string) {
+  return text.length > 100 ? text.slice(0, 100) + "…" : text;
+}
 
 const handler = createMcpHandler(
   (server) => {
+    // ---------- get_rules ----------
     server.registerTool(
       "get_rules",
       {
@@ -13,20 +21,104 @@ const handler = createMcpHandler(
           "À APPELER EN PREMIER, avant toute utilisation du bloc-notes partagé. " +
           "Retourne les règles : quand lire, quoi écrire, quel format, " +
           "quelles actions demandent une confirmation.",
-        // pas de paramètre → pas d'inputSchema
       },
-      async () => ({ content: [{ type: "text", text: RULES }] })
+      async () => {
+        await addHistory({ date: new Date().toISOString(), agent: AGENT, action: "get_rules" });
+        return { content: [{ type: "text", text: RULES }] };
+      }
     );
 
+    // ---------- read_notes ----------
     server.registerTool(
       "read_notes",
       {
         title: "Lire le bloc-notes",
         description:
           "Retourne le contenu complet du bloc-notes partagé entre les agents " +
-          "(tâches, échéances, décisions du projet).",
+          "(tâches, échéances, décisions du projet). " +
+          "À utiliser avant toute écriture et pour répondre aux questions sur le projet.",
       },
-      async () => ({ content: [{ type: "text", text: notes }] })
+      async () => {
+        const notes = await getNotes();
+        await addHistory({ date: new Date().toISOString(), agent: AGENT, action: "read_notes" });
+        return { content: [{ type: "text", text: notes || "(Le bloc-notes est vide.)" }] };
+      }
+    );
+
+    // ---------- append_note ----------
+    server.registerTool(
+      "append_note",
+      {
+        title: "Ajouter une note",
+        description:
+          "Ajoute UNE ligne à la fin du bloc-notes sans modifier le contenu existant. " +
+          "Format attendu : '- [AAAA-MM-JJ] [CATÉGORIE] contenu', " +
+          "avec CATÉGORIE parmi TODO, DÉCISION, ÉCHÉANCE, INFO, FAIT.",
+        inputSchema: z.object({
+          content: z
+            .string()
+            .min(1)
+            .max(2000)
+            .describe("La ligne à ajouter, au format décrit dans get_rules"),
+        }),
+      },
+      async ({ content }) => {
+        await appendToNotes(content);
+        await addHistory({
+          date: new Date().toISOString(),
+          agent: AGENT,
+          action: "append_note",
+          summary: summary(content),
+        });
+        return { content: [{ type: "text", text: `Note ajoutée : ${content}` }] };
+      }
+    );
+
+    // ---------- replace_notes ----------
+    server.registerTool(
+      "replace_notes",
+      {
+        title: "Remplacer tout le bloc-notes",
+        description:
+          "ACTION SENSIBLE : remplace la TOTALITÉ du bloc-notes. " +
+          "N'utiliser qu'après avoir lu les notes, montré à l'utilisateur ce qui va changer, " +
+          "et obtenu son accord explicite. Ne jamais l'utiliser pour un simple ajout " +
+          "(utiliser append_note).",
+        inputSchema: z.object({
+          content: z.string().max(20000).describe("Le nouveau contenu complet du bloc-notes"),
+          user_confirmed: z
+            .boolean()
+            .describe("true uniquement si l'utilisateur a explicitement validé ce remplacement"),
+        }),
+      },
+      async ({ content, user_confirmed }) => {
+        if (!user_confirmed) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: "text",
+                text:
+                  "Remplacement refusé : demande d'abord une confirmation explicite " +
+                  "à l'utilisateur, puis rappelle l'outil avec user_confirmed = true.",
+              },
+            ],
+          };
+        }
+        const previous = await setNotes(content);
+        await addHistory({
+          date: new Date().toISOString(),
+          agent: AGENT,
+          action: "replace_notes",
+          summary: summary(content),
+          previous,
+        });
+        return {
+          content: [
+            { type: "text", text: "Bloc-notes remplacé. L'ancienne version est conservée dans l'historique." },
+          ],
+        };
+      }
     );
   },
   { serverInfo: { name: "bloc-notes-partage", version: "1.0.0" }, verboseLogs: true }
