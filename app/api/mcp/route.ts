@@ -2,6 +2,7 @@ import { createMcpHandler } from "mcp-handler";
 import { z } from "zod";
 import { RULES } from "@/lib/rules";
 import { getNotes, appendToNotes, setNotes, addHistory } from "@/lib/store";
+import { timingSafeEqual } from "node:crypto";
 
 // Provisoire : l'identification de l'agent arrive à l'étape 5
 const AGENT = "inconnu";
@@ -10,7 +11,7 @@ function summary(text: string) {
   return text.length > 100 ? text.slice(0, 100) + "…" : text;
 }
 
-const handler = createMcpHandler(
+const mcpHandler = createMcpHandler(
   (server) => {
     // ---------- get_rules ----------
     server.registerTool(
@@ -123,5 +124,45 @@ const handler = createMcpHandler(
   },
   { serverInfo: { name: "bloc-notes-partage", version: "1.0.0" }, verboseLogs: true }
 );
+
+
+// ---------- Authentification par clé partagée ----------
+
+// Comparaison en temps constant : évite de deviner la clé
+// en mesurant le temps de réponse du serveur.
+function safeEqual(a: string, b: string): boolean {
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  return bufA.length === bufB.length && timingSafeEqual(bufA, bufB);
+}
+
+function isAuthorized(req: Request): boolean {
+  const expected = process.env.MCP_API_KEY;
+  if (!expected) return false; // pas de clé configurée → tout est refusé
+
+  // 1. En-tête Authorization: Bearer ... (méthode recommandée)
+  const header = req.headers.get("authorization");
+  const bearer = header?.startsWith("Bearer ") ? header.slice(7).trim() : null;
+
+  // 2. Paramètre ?key=... dans l'URL (solution de repli pour le TP)
+  const queryKey = new URL(req.url).searchParams.get("key");
+
+  const provided = bearer ?? queryKey;
+  return provided !== null && safeEqual(provided, expected);
+}
+
+async function handler(req: Request): Promise<Response> {
+  if (!isAuthorized(req)) {
+    return new Response(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        error: { code: -32001, message: "Non autorisé : clé manquante ou invalide." },
+        id: null,
+      }),
+      { status: 401, headers: { "Content-Type": "application/json" } }
+    );
+  }
+  return mcpHandler(req);
+}
 
 export { handler as GET, handler as POST };
