@@ -121,7 +121,14 @@ const mcpHandler = createMcpHandler(
       }
     );
   },
-  { serverInfo: { name: "bloc-notes-partage", version: "1.0.0" }, verboseLogs: true }
+  {
+    serverInfo: { name: "bloc-notes-partage", version: "1.0.0" },
+    instructions:
+      "Ce serveur donne accès à un bloc-notes partagé entre plusieurs agents IA. " +
+      "OBLIGATOIRE : avant toute première utilisation du bloc-notes dans une conversation, " +
+      "appelle get_rules() et respecte les règles retournées.",
+    verboseLogs: true,
+  }
 );
 
 
