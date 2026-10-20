@@ -3,9 +3,8 @@ import { z } from "zod";
 import { RULES } from "@/lib/rules";
 import { getNotes, appendToNotes, setNotes, addHistory } from "@/lib/store";
 import { timingSafeEqual } from "node:crypto";
+import { requestContext, currentAgent } from "@/lib/agent-context";
 
-// Provisoire : l'identification de l'agent arrive à l'étape 5
-const AGENT = "inconnu";
 
 function summary(text: string) {
   return text.length > 100 ? text.slice(0, 100) + "…" : text;
@@ -24,7 +23,7 @@ const mcpHandler = createMcpHandler(
           "quelles actions demandent une confirmation.",
       },
       async () => {
-        await addHistory({ date: new Date().toISOString(), agent: AGENT, action: "get_rules" });
+        await addHistory({ date: new Date().toISOString(), agent: currentAgent(), action: "get_rules" });
         return { content: [{ type: "text", text: RULES }] };
       }
     );
@@ -41,7 +40,7 @@ const mcpHandler = createMcpHandler(
       },
       async () => {
         const notes = await getNotes();
-        await addHistory({ date: new Date().toISOString(), agent: AGENT, action: "read_notes" });
+        await addHistory({ date: new Date().toISOString(), agent: currentAgent(), action: "read_notes" });
         return { content: [{ type: "text", text: notes || "(Le bloc-notes est vide.)" }] };
       }
     );
@@ -67,7 +66,7 @@ const mcpHandler = createMcpHandler(
         await appendToNotes(content);
         await addHistory({
           date: new Date().toISOString(),
-          agent: AGENT,
+          agent: currentAgent(),
           action: "append_note",
           summary: summary(content),
         });
@@ -109,7 +108,7 @@ const mcpHandler = createMcpHandler(
         const previous = await setNotes(content);
         await addHistory({
           date: new Date().toISOString(),
-          agent: AGENT,
+          agent: currentAgent(),
           action: "replace_notes",
           summary: summary(content),
           previous,
@@ -151,6 +150,19 @@ function isAuthorized(req: Request): boolean {
   return provided !== null && safeEqual(provided, expected);
 }
 
+// ---------- Identification de l'agent ----------
+
+function getAgentName(req: Request): string {
+  // En-tête X-Agent-Name, ou ?agent=... pour les clients sans en-têtes personnalisés
+  const raw =
+    req.headers.get("x-agent-name") ??
+    new URL(req.url).searchParams.get("agent") ??
+    "";
+  // Nettoyage : lettres, chiffres, . _ - uniquement, 50 caractères max
+  const clean = raw.trim().replace(/[^a-zA-Z0-9._-]/g, "").slice(0, 50);
+  return clean || "non-identifié";
+}
+
 async function handler(req: Request): Promise<Response> {
   if (!isAuthorized(req)) {
     return new Response(
@@ -162,7 +174,8 @@ async function handler(req: Request): Promise<Response> {
       { status: 401, headers: { "Content-Type": "application/json" } }
     );
   }
-  return mcpHandler(req);
+  const agent = getAgentName(req);
+  return requestContext.run({ agent }, () => mcpHandler(req));
 }
 
 export { handler as GET, handler as POST };

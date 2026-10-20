@@ -31,9 +31,13 @@ Exemple : - [2026-10-19] [ÉCHÉANCE] Le projet doit être livré vendredi 23 oc
 Une tâche terminée n'est pas supprimée : elle est marquée [FAIT].
 
 6. TRAÇABILITÉ
-Le serveur journalise automatiquement chaque appel avec :
-date (ISO 8601, UTC), nom de l'agent (en-tête X-Agent-Name), action (nom de l'outil),
-et un résumé du contenu (100 premiers caractères pour append_note / replace_notes).
-Tu dois toujours t'identifier avec un nom d'agent du type "outil-prénom".
+Chaque appel d'outil est journalisé automatiquement par le serveur avec :
+- date : horodatage ISO 8601 en UTC (ex. 2026-10-20T14:32:10Z)
+- agent : nom transmis dans l'en-tête X-Agent-Name (ou ?agent= dans l'URL),
+  au format "outil-prénom" (ex. cursor-camille). Sans nom : "non-identifié".
+- action : nom de l'outil appelé (get_rules, read_notes, append_note, replace_notes)
+- summary : les 100 premiers caractères du contenu écrit (append_note, replace_notes)
+- previous : l'ancien contenu complet, pour replace_notes uniquement (permet la restauration)
+La lecture et la consultation des règles sont aussi tracées.
 Après chaque écriture, indique à l'utilisateur ce que tu as ajouté ou modifié.
 `;
